@@ -20,16 +20,34 @@ test_infer(Cases) ->
 cannot_unify_test() ->
   Cases = [
     "1 +. 1",
+
     "{1, 1} + 1",
+
     "1 + 2.0",
+
     "1 == 2.0",
+
     "[1, 2.0]",
+
     "[1, 2, 3, 4, 5, 'six']",
+
     "{'ok', 1} != {'ok', 1, 'extra'}",
+
     "{} == {a = 1}",
+
     "1 == {a = 1}",
+
     "{a = 1} != 1",
-    "test whatever { 1 == '1' }"
+
+    "test whatever { 1 == '1' }",
+
+    "enum A = | A "
+    "enum B = | B "
+    "fn run() { A == B }"
+    ,
+
+    "enum A = | A(Int) "
+    "fn run() { A(1.0) }"
   ],
   Test =
     fun(Src) ->
@@ -320,12 +338,89 @@ throw_raise_test() ->
   ],
   test_infer(Cases).
 
+cast_test() ->
+  Cases = [
+    {
+     "case 1 { | a -> a }",
+     "Int"
+    },
+    {
+     "case \"\" { | a -> 0.0 }",
+     "Float"
+    },
+    {
+     "case 'ok' { | 'ok' -> 0 | 'error' -> 1 }",
+     "Int"
+    },
+    {
+     "fn(x) { case x { | 1 -> 'ok' } }",
+     "fn(Int) -> Atom"
+    },
+    {
+     "fn(x, y) { case x { | 1 -> y | a -> {'ok', 2} } }",
+     "fn(Int, Tuple(Atom, Int)) -> Tuple(Atom, Int)"
+    },
+    {
+     "case {'ok', 1} { | {'ok', int} -> int | _other -> 0 }",
+     "Int"
+    },
+    {
+     "case [] { | [] -> 0 | x :: xs -> x }",
+     "Int"
+    },
+    {
+     "case 1 { | 1 -> 'one' | 2 -> 'two' | 3 -> 'dunnno' }",
+     "Atom"
+    }
+  ],
+  test_infer(Cases).
+
 module_test() ->
   Cases = [
     {
-     "fn status() { 'ok' }"
-     "fn list_of(x) { [x] }"
-     "fn get_age(person) { person.age }"
+     "fn private() { 1 }"
+     "pub fn public() { 1 }"
+     ,
+     "module {"
+     " fn public() -> Int"
+     "}"
+    },
+
+    {
+     "fn id(x) { x }"
+     "pub fn int() { id(1) }"
+     "pub fn float() { id(1.0) }"
+     ,
+     "module {"
+     " fn int() -> Int"
+     " fn float() -> Float"
+     "}"
+    },
+
+    {
+     "enum Is = | Yes | No "
+     "pub fn yes() { Yes }"
+     "pub fn no() { No }"
+     ,
+     "module {"
+     " fn yes() -> Is"
+     " fn no() -> Is"
+     "}"
+    },
+
+    {
+     "enum Num = | I(Int) "
+     "pub fn num(n) { I(n) }"
+     ,
+     "module {"
+     " fn num(Int) -> Num"
+     "}"
+    },
+
+    {
+     "pub fn status() { 'ok' }"
+     "pub fn list_of(x) { [x] }"
+     "pub fn get_age(person) { person.age }"
      "test whatever { 'ok' }"
      ,
      "module {"
@@ -336,6 +431,24 @@ module_test() ->
     }
   ],
   test_infer(Cases).
+
+enum_test() ->
+  Cases = [
+    {
+     "enum Box(a) = | Box(a) "
+     "pub fn int() { Box(1) }"
+     "pub fn float() { Box(1.0) }"
+     ,
+     "module {"
+     " fn int() -> Box(Int)"
+     " fn float() -> Box(Float)"
+     "}"
+    }
+  ],
+  test_infer(Cases).
+
+% TODO: Test enums that won't type check
+% TODO: Test that enum constructors with type vars must have the type vars at the top level
 
 % Depends on tuple destructuring
 % ; ("choose(fun x y -> x, fun x y -> y)", OK "forall[a] (a, a) -> a") *)

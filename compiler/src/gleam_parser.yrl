@@ -1,10 +1,10 @@
 Nonterminals
-source module
-function test
-exprs expr operator literal elems args call_args
-container_pattern elems_pattern
-pattern
-case_expr case_clauses case_clause field fields.
+source module statements statement
+function test enum enum_defs enum_def
+exprs expr literal elems args call_args
+container_pattern elems_pattern pattern
+type type_args
+case_clauses case_clause field fields.
 
 Terminals
 '(' ')' '[' ']' '::' '{' '}'
@@ -13,9 +13,9 @@ Terminals
 '.'
 '/' '*' '+' '-' '/.' '*.' '+.' '-.'
 int float atom string
-hole name upname upcall
+hole name upname
 kw_fn kw_fn_call kw_case kw_test
-kw_raise kw_throw kw_pub.
+kw_raise kw_throw kw_pub kw_enum.
 
 Rootsymbol source.
 
@@ -42,15 +42,36 @@ Right 70 '|'.
 source -> module : '$1'.
 source -> exprs  : '$1'.
 
-module -> kw_pub function        : mod_fun(true, '$2', #ast_module{}).
-module -> kw_pub function module : mod_fun(true, '$2', '$3').
-module -> function               : mod_fun(false, '$1', #ast_module{}).
-module -> function module        : mod_fun(false, '$1', '$2').
-module -> test                   : mod_test('$1', #ast_module{}).
-module -> test module            : mod_test('$1', '$2').
+module -> statements : #ast_module{statements = '$1'}.
 
-function -> kw_fn name '(' ')' '{' exprs '}'      : function('$2', [], '$6').
-function -> kw_fn name '(' args ')' '{' exprs '}' : function('$2', '$4', '$7').
+statements -> statement             : ['$1'].
+statements -> statement statements  : ['$1' | '$2'].
+
+statement -> function : '$1'.
+statement -> test     : '$1'.
+statement -> enum     : '$1'.
+
+enum -> kw_pub kw_enum upname              '=' enum_defs : enum(true, '$3', [], '$5').
+enum -> kw_pub kw_enum upname '(' args ')' '=' enum_defs : enum(true, '$3', '$5', '$8').
+enum ->        kw_enum upname              '=' enum_defs : enum(false, '$2', [], '$4').
+enum ->        kw_enum upname '(' args ')' '=' enum_defs : enum(false, '$2', '$4', '$7').
+
+enum_defs -> enum_def           : ['$1'].
+enum_defs -> enum_def enum_defs : ['$1' | '$2'].
+
+enum_def -> '|' upname                   : enum_def('$2', []).
+enum_def -> '|' upname '(' type_args ')' : enum_def('$2', '$4').
+
+type_args -> type               : ['$1'].
+type_args -> type ',' type_args : ['$1' | '$3'].
+
+type -> upname : type_constructor('$1', []).
+type -> name   : type_var('$1').
+
+function -> kw_pub kw_fn name '('      ')' '{' exprs '}' : function(true, '$3', [], '$7').
+function -> kw_pub kw_fn name '(' args ')' '{' exprs '}' : function(true, '$3', '$5', '$8').
+function ->        kw_fn name '('      ')' '{' exprs '}' : function(false, '$2', [], '$6').
+function ->        kw_fn name '(' args ')' '{' exprs '}' : function(false, '$2', '$4', '$7').
 
 test -> kw_test name '{' exprs '}' : test('$2', '$4').
 
@@ -59,16 +80,14 @@ exprs -> expr                : '$1'.
 exprs -> expr exprs          : seq('$1', '$2').
 
 expr -> literal                    : '$1'.
-expr -> upname                     : adt('$1', []).
-expr -> upcall elems ')'           : adt('$1', '$2').
+expr -> upname                     : enum_constructor('$1', []).
+expr -> upname '(' elems ')'       : enum_constructor('$1', '$3').
 expr -> '{' elems '}'              : tuple('$1', '$2').
 expr -> '[' ']'                    : list('$2', []).
 expr -> '[' elems ']'              : list('$3', '$2').
 expr -> '{' '}'                    : #ast_record_empty{}.
 expr -> '{' fields '}'             : record('$1', '$2').
 expr -> '{' expr '|' fields '}'    : record_extend('$2', '$4').
-expr -> case_expr                  : '$1'.
-expr -> operator                   : '$1'.
 expr -> name                       : var('$1').
 expr -> expr '.' name              : record_select('$2', '$1', '$3').
 expr -> expr '(' ')'               : local_call('$2', '$1', []).
@@ -77,25 +96,23 @@ expr -> expr '.' '(' ')'           : fn_call('$2', '$1', []).
 expr -> expr '.' '(' call_args ')' : fn_call('$2', '$1', '$4').
 expr -> kw_raise expr ')'          : raise('$1', '$2').
 expr -> kw_throw expr ')'          : throw_('$1', '$2').
-
-operator -> expr '|>' expr : operator('$2', ['$1', '$3']).
-operator -> expr '::' expr : cons('$2', '$1', '$3').
-operator -> expr '+' expr  : operator('$2', ['$1', '$3']).
-operator -> expr '-' expr  : operator('$2', ['$1', '$3']).
-operator -> expr '*' expr  : operator('$2', ['$1', '$3']).
-operator -> expr '/' expr  : operator('$2', ['$1', '$3']).
-operator -> expr '+.' expr : operator('$2', ['$1', '$3']).
-operator -> expr '-.' expr : operator('$2', ['$1', '$3']).
-operator -> expr '*.' expr : operator('$2', ['$1', '$3']).
-operator -> expr '/.' expr : operator('$2', ['$1', '$3']).
-operator -> expr '<=' expr : operator('$2', ['$1', '$3']).
-operator -> expr '<'  expr : operator('$2', ['$1', '$3']).
-operator -> expr '>'  expr : operator('$2', ['$1', '$3']).
-operator -> expr '>=' expr : operator('$2', ['$1', '$3']).
-operator -> expr '==' expr : operator('$2', ['$1', '$3']).
-operator -> expr '!=' expr : operator('$2', ['$1', '$3']).
-
-case_expr -> kw_case expr '{' case_clauses '}' : case_expr('$1', '$2', '$4').
+expr -> expr '::' expr             : cons('$2', '$1', '$3').
+expr -> expr '|>' expr             : op('$2', ['$1', '$3']).
+expr -> expr '+' expr              : op('$2', ['$1', '$3']).
+expr -> expr '-' expr              : op('$2', ['$1', '$3']).
+expr -> expr '*' expr              : op('$2', ['$1', '$3']).
+expr -> expr '/' expr              : op('$2', ['$1', '$3']).
+expr -> expr '+.' expr             : op('$2', ['$1', '$3']).
+expr -> expr '-.' expr             : op('$2', ['$1', '$3']).
+expr -> expr '*.' expr             : op('$2', ['$1', '$3']).
+expr -> expr '/.' expr             : op('$2', ['$1', '$3']).
+expr -> expr '<=' expr             : op('$2', ['$1', '$3']).
+expr -> expr '<'  expr             : op('$2', ['$1', '$3']).
+expr -> expr '>'  expr             : op('$2', ['$1', '$3']).
+expr -> expr '>=' expr             : op('$2', ['$1', '$3']).
+expr -> expr '==' expr             : op('$2', ['$1', '$3']).
+expr -> expr '!=' expr             : op('$2', ['$1', '$3']).
+expr -> kw_case expr '{' case_clauses '}' : case_expr('$1', '$2', '$4').
 
 case_clauses -> case_clause              : ['$1'].
 case_clauses -> case_clause case_clauses : ['$1'|'$2'].
@@ -129,13 +146,13 @@ pattern -> name                 : var('$1').
 pattern -> hole                 : hole('$1').
 pattern -> pattern '::' pattern : cons('$2', '$1', '$3').
 
-container_pattern -> upname                   : adt('$1', []).
-container_pattern -> upcall elems_pattern ')' : adt('$1', '$2').
-container_pattern -> '(' ')'                  : tuple('$1', []).
-container_pattern -> '(' elems_pattern ')'    : tuple('$1', '$2').
-container_pattern -> '{' elems_pattern '}'    : tuple('$1', '$2').
-container_pattern -> '[' ']'                  : list('$2', []).
-container_pattern -> '[' elems_pattern ']'    : list('$3', '$2').
+container_pattern -> upname                       : enum_constructor('$1', []).
+container_pattern -> upname '(' elems_pattern ')' : enum_constructor('$1', '$3').
+container_pattern -> '(' ')'                      : tuple('$1', []).
+container_pattern -> '(' elems_pattern ')'        : tuple('$1', '$2').
+container_pattern -> '{' elems_pattern '}'        : tuple('$1', '$2').
+container_pattern -> '[' ']'                      : list('$2', []).
+container_pattern -> '[' elems_pattern ']'        : list('$3', '$2').
 
 elems_pattern -> pattern                   : ['$1'].
 elems_pattern -> pattern ','               : ['$1'].
@@ -152,19 +169,6 @@ Erlang code.
 
 -include("gleam_records.hrl").
 
-mod_fun(true, Function, Module) ->
-  #ast_module{statements = Statements, exports = Exports} = Module,
-  #ast_mod_fn{name = Name, args = Args} = Function,
-  Module#ast_module{statements = [Function | Statements],
-                    exports = [{Name, length(Args)} | Exports]};
-mod_fun(false, Function, Module) ->
-  #ast_module{statements = Statements} = Module,
-  Module#ast_module{statements = [Function | Statements]}.
-
-mod_test(Test, Module) ->
-  #ast_module{statements = Statements} = Module,
-  Module#ast_module{statements = [Test | Statements]}.
-
 seq(First, Then) ->
   #ast_seq{first = First, then = Then}.
 
@@ -180,7 +184,7 @@ test({name, Meta, Name}, Body) ->
 fn({_, Meta}, Args, Body) ->
   #ast_fn{meta = Meta, args = Args, body = Body}.
 
-operator({Operator, Meta}, Args) ->
+op({Operator, Meta}, Args) ->
   #ast_operator{meta = Meta, name = atom_to_list(Operator), args = Args}.
 
 local_call({'(', Meta}, Fn, Args) ->
@@ -189,8 +193,33 @@ local_call({'(', Meta}, Fn, Args) ->
 fn_call({'.', Meta}, Fn, Args) ->
   #ast_fn_call{meta = Meta, fn = Fn, args = Args}.
 
-function({name, Meta, Name}, Args, Body) ->
-  #ast_mod_fn{meta = Meta, name = Name, args = Args, body = Body}.
+function(Public, {name, Meta, Name}, Args, Body) ->
+  #ast_mod_fn{public = Public,
+              meta = Meta,
+              name = Name,
+              args = Args,
+              body = Body}.
+
+enum(Public, {upname, Meta, Name}, Args, Constructors) ->
+  #ast_mod_enum{meta = Meta,
+                public = Public,
+                name = Name,
+                args = Args,
+                constructors = Constructors}.
+
+enum_def({upname, Meta, Name}, Args) ->
+  #ast_enum_def{meta = Meta,
+                name = Name,
+                args = Args}.
+
+type_constructor({upname, Meta, Name}, Args) ->
+  #ast_type_constructor{meta = Meta,
+                        name = Name,
+                        args = Args}.
+
+type_var({name, Meta, Name}) ->
+  #ast_type_var{meta = Meta,
+                name = Name}.
 
 assignment({'=', Meta}, {name, _, Name}, Value, Then) ->
   #ast_assignment{meta = Meta, name = Name, value = Value, then = Then}.
@@ -233,8 +262,8 @@ list({']', NilMeta}, Elems) ->
   end,
   lists:foldl(Cons, #ast_nil{meta = NilMeta}, lists:reverse(Elems)).
 
-adt({Type, Meta, Name}, Elems) when Type =:= upname; Type =:= upcall ->
-  #ast_adt{name = Name, meta = Meta, elems = Elems}.
+enum_constructor({upname, Meta, Name}, Elems) ->
+  #ast_enum{name = Name, meta = Meta, elems = Elems}.
 
 case_expr({kw_case, Meta}, Subject, Clauses) ->
   #ast_case{meta = Meta, subject = Subject, clauses = Clauses}.

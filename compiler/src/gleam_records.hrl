@@ -6,6 +6,50 @@
 -type export() :: {string(), non_neg_integer()}.
 -type type_annotation() :: type_not_annotated | {ok, type()}.
 
+-record(ast_enum_def,
+        {meta = #meta{} :: meta(),
+         name :: string(),
+         args = [] :: [ast_type()]}).
+
+-record(ast_type_constructor,
+        {meta = #meta{} :: meta(),
+         name :: string(),
+         args = [] :: [ast_type()]}).
+
+-record(ast_type_var,
+        {meta = #meta{} :: meta(),
+         name :: string()}).
+
+-type ast_type()
+      :: #ast_type_constructor{}
+      | #ast_type_var{}
+      .
+
+-record(ast_mod_fn,
+        {meta = #meta{} :: meta(),
+         type = type_not_annotated :: type_annotation(),
+         public = false :: boolean(),
+         name :: string(),
+         args = [] :: [string()],
+         body :: ast_expression()}).
+
+-record(ast_mod_test,
+        {meta = #meta{} :: meta(),
+         name :: string(),
+         body :: ast_expression()}).
+
+-record(ast_mod_enum,
+        {meta = #meta{} :: meta(),
+         public = false :: boolean(),
+         args = [] :: [string()],
+         name :: string(),
+         constructors = [] :: [ast_type()]}).
+
+-type mod_statement()
+      :: #ast_mod_fn{}
+      | #ast_mod_test{}
+      .
+
 -record(ast_tuple,
         {meta = #meta{} :: meta(),
          elems = [] :: [ast_expression()]}).
@@ -56,7 +100,8 @@
          type = type_not_annotated :: type_annotation()}).
 
 -record(ast_hole,
-        {meta = #meta{} :: meta()}).
+        {meta = #meta{} :: meta(),
+         type = type_not_annotated :: type_annotation()}).
 
 -record(ast_fn_call,
         {meta = #meta{} :: meta(),
@@ -92,18 +137,21 @@
          value :: ast_expression(),
          then :: ast_expression()}).
 
--record(ast_adt,
+-record(ast_enum,
         {meta = #meta{} :: meta(),
+         type = type_not_annotated :: type_annotation(),
          name :: string(),
-         elems = [] :: [ast_expression()]}).
+         elems = [] :: [ast_expression()]}). % TODO: Rename to args
 
 -record(ast_clause,
         {meta = #meta{} :: meta(),
-         pattern :: ast_expression(),
+         type = type_not_annotated :: type_annotation(),
+         pattern :: ast_pattern(),
          value :: ast_expression()}).
 
 -record(ast_case,
         {meta = #meta{} :: meta(),
+         type = type_not_annotated :: type_annotation(),
          subject :: ast_expression(),
          clauses = [#ast_clause{}]}).
 
@@ -123,34 +171,15 @@
          record :: ast_expression(),
          label :: string()}).
 
--record(ast_mod_fn,
-        {meta = #meta{} :: meta(),
-         type = type_not_annotated :: type_annotation(),
-         name :: string(),
-         args = [] :: [string()],
-         body :: ast_expression()}).
-
--record(ast_mod_test,
-        {meta = #meta{} :: meta(),
-         name :: string(),
-         body :: ast_expression()}).
-
 -record(ast_module,
-        {exports = [] :: [export()],
-         type = type_not_annotated :: type_annotation(),
+        {type = type_not_annotated :: type_annotation(),
          statements = [] :: [mod_statement()]}).
 
 -record(ast_seq,
         {first :: ast_expression(),
          then :: ast_expression()}).
-
--type mod_statement()
-      :: #ast_mod_fn{}
-      | #ast_mod_test{}
-      .
-
 -type ast_expression()
-      :: #ast_adt{}
+      :: #ast_enum{}
       | #ast_assignment{}
       | #ast_atom{}
       | #ast_call{}
@@ -175,6 +204,8 @@
       | #ast_var{}
       .
 
+-type ast_pattern() :: ast_expression(). % TODO: Refine.
+
 %
 % Types
 %
@@ -182,7 +213,6 @@
 -type id() :: reference().
 -type type_var_reference() :: reference().
 -type level() :: integer().
-
 
 -record(type_const, {type :: string()}).
 -record(type_fn, {args :: list(type()), return :: type()}).

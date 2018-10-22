@@ -1,15 +1,9 @@
-import order:Order
-
-pub enum Bool =
-  | True
-  | False
-
-import Bool:*
+import order:[Gt, Eq, Lt]
 
 pub fn not(bool) {
   case bool {
-  | True => False
-  | False => True
+  | True -> False
+  | False -> True
   }
 }
 
@@ -23,31 +17,31 @@ test not {
 
 pub fn compare(a, b) {
   case (a, b) {
-  | (True, True) => Order:EQ
-  | (True, False) => Order:GT
-  | (False, False) => Order:EQ
-  | (False, True) => Order:GT
+  | (True, True) -> Eq
+  | (True, False) -> Gt
+  | (False, False) -> Eq
+  | (False, True) -> Gt
   }
 }
 
 test compare {
   compare(True, True)
-    |> assert:equal(_, Order:EQ)
+    |> assert:equal(_, Eq)
 
   compare(True, False)
-    |> assert:equal(_, Order:GT)
+    |> assert:equal(_, Gt)
 
   compare(False, False)
-    |> assert:equal(_, Order:LT)
+    |> assert:equal(_, Lt)
 
   compare(False, True)
-    |> assert:equal(_, Order:GT)
+    |> assert:equal(_, Gt)
 }
 
 pub fn max(a, b) {
   case a {
-  | True => True
-  | False => b
+  | True -> True
+  | False -> b
   }
 }
 
@@ -67,8 +61,8 @@ test max {
 
 pub fn min(a, b) {
   case a {
-  | False => False
-  | True => b
+  | False -> False
+  | True -> b
   }
 }
 
@@ -88,8 +82,8 @@ test min {
 
 pub fn to_int(bool) {
   case bool {
-  | False => 0
-  | True => 1
+  | False -> 0
+  | True -> 1
   }
 }
 

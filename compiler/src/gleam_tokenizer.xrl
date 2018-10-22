@@ -15,6 +15,7 @@ raise\(    : {token, {kw_raise, m(TokenLine)}}.
 throw\(    : {token, {kw_throw, m(TokenLine)}}.
 case       : {token, {kw_case, m(TokenLine)}}.
 test       : {token, {kw_test, m(TokenLine)}}.
+enum       : {token, {kw_enum, m(TokenLine)}}.
 pub        : {token, {kw_pub, m(TokenLine)}}.
 fn         : {token, {kw_fn, m(TokenLine)}}.
 fn\(       : {token, {kw_fn_call, m(TokenLine)}}.
@@ -53,7 +54,6 @@ fn\(       : {token, {kw_fn_call, m(TokenLine)}}.
 _          : {token, {hole, m(TokenLine)}}.
 _{Name}    : {token, {hole, m(TokenLine)}}.
 {Name}     : {token, {name, m(TokenLine), TokenChars}}.
-{UpName}\( : {token, {upcall, m(TokenLine), call(TokenChars)}}.
 {UpName}   : {token, {upname, m(TokenLine), TokenChars}}.
 {String}   : {token, {string, m(TokenLine), str(TokenChars)}}.
 {Comment}  : skip_token.
@@ -71,9 +71,6 @@ int(S) when is_list(S) ->
 flt(S) when is_list(S) ->
   {F, _} = string:to_float(S),
   F.
-
-call(S) ->
-  lists:droplast(S).
 
 atom(S) when is_list(S) ->
   Contents  = tl(lists:droplast(S)),

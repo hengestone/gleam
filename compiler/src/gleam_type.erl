@@ -9,10 +9,12 @@
 -endif.
 
 -type var_name() :: string().
+-type type_name() :: string().
 
 -record(env,
         {level = 0 :: level(),
          vars = #{} :: #{var_name() => type()},
+         types = #{} :: #{type_name() => type()},
          type_refs = #{} :: #{reference() => type_var()}}).
 
 -type env() :: #env{}.
@@ -53,6 +55,111 @@ infer(Ast) ->
     throw:{gleam_type_error, Error} -> {error, Error}
   end.
 
+-spec unify_clauses([#ast_clause{}], type(), env()) -> env().
+unify_clauses(Clauses, SubjectType, Env0) ->
+  [#ast_clause{pattern = FirstPattern} = First | Rest] = Clauses,
+  Env1 = unify(SubjectType, pattern_fetch(FirstPattern), Env0),
+  Unify =
+    fun(#ast_clause{pattern = P2, value = V2} = Clause2,
+        {#ast_clause{pattern = P1, value = V1}, E0}) ->
+      E1 = unify(pattern_fetch(P1), pattern_fetch(P2), E0),
+      E2 = unify(fetch(V1), fetch(V2), E1),
+      {Clause2, E2}
+    end,
+  {_, Env2} = lists:foldl(Unify, {First, Env1}, Rest),
+  Env2.
+
+-spec pattern_fetch(ast_pattern()) -> type().
+pattern_fetch(Pattern) ->
+  case Pattern of
+    #ast_var{type = {ok, Type}} ->
+      Type;
+
+    #ast_nil{type = {ok, Type}} ->
+      Type;
+
+    #ast_hole{type = {ok, Type}} ->
+      Type;
+
+    #ast_record_empty{} ->
+      #type_record{row = #type_row_empty{}};
+
+    #ast_tuple{elems = Elems} ->
+      ElemsTypes = lists:map(fun pattern_fetch/1, Elems),
+      #type_app{type = "Tuple", args = ElemsTypes};
+
+    #ast_cons{head = Head} ->
+      #type_app{type = "List", args = [pattern_fetch(Head)]};
+
+    #ast_int{} ->
+      #type_const{type = "Int"};
+
+    #ast_atom{} ->
+      #type_const{type = "Atom"};
+
+    #ast_float{} ->
+      #type_const{type = "Float"};
+
+    #ast_string{} ->
+      #type_const{type = "String"}
+  end.
+
+
+-spec infer_clause(#ast_clause{}, env()) -> {#ast_clause{}, env()}.
+infer_clause(#ast_clause{pattern = Pattern, value = Value} = Clause, Env0) ->
+  {AnnotatedPattern, Env1} = infer_pattern(Pattern, Env0),
+  {AnnotatedValue, Env2} = infer(Value, Env1),
+  NewClause = Clause#ast_clause{pattern = AnnotatedPattern, value = AnnotatedValue},
+  {NewClause, Env2}.
+
+
+-spec infer_pattern(ast_pattern(), env()) -> {ast_pattern(), env()}.
+infer_pattern(Pattern, Env0) ->
+  case Pattern of
+    #ast_nil{} ->
+      {Var, NewEnv} = new_var(Env0),
+      Type = #type_app{type = "List", args = [Var]},
+      AnnotatedPattern = Pattern#ast_nil{type = {ok, Type}},
+      {AnnotatedPattern, NewEnv};
+
+    #ast_cons{head = Head, tail = Tail} ->
+      {AnnotatedTail, Env1} = infer_pattern(Tail, Env0),
+      {AnnotatedHead, Env2} = infer_pattern(Head, Env1),
+      TailType = pattern_fetch(AnnotatedTail),
+      HeadType = pattern_fetch(AnnotatedHead),
+      Env3 = unify(TailType, #type_app{type = "List", args = [HeadType]}, Env2),
+      AnnotatedPattern = Pattern#ast_cons{head = AnnotatedHead, tail = AnnotatedTail},
+      {AnnotatedPattern, Env3};
+
+    #ast_tuple{elems = Elems} ->
+      {AnnotatedElems, NewEnv} = gleam:thread_map(fun infer_pattern/2, Elems, Env0),
+      AnnotatedPattern = Pattern#ast_tuple{elems = AnnotatedElems},
+      {AnnotatedPattern, NewEnv};
+
+    #ast_var{name = Name} ->
+      {Var, Env1} = new_var(Env0),
+      Env2 = env_extend(Name, Var, Env1),
+      AnnotatedPattern = Pattern#ast_var{type = {ok, Var}},
+      {AnnotatedPattern, Env2};
+
+    #ast_hole{} ->
+      {Var, Env1} = new_var(Env0),
+      AnnotatedPattern = Pattern#ast_hole{type = {ok, Var}},
+      {AnnotatedPattern, Env1};
+
+    #ast_int{} ->
+      {Pattern, Env0};
+
+    #ast_float{} ->
+      {Pattern, Env0};
+
+    #ast_string{} ->
+      {Pattern, Env0};
+
+    #ast_atom{} ->
+      {Pattern, Env0}
+  end.
+
 -spec infer(ast_expression(), env()) -> {ast_expression(), env()}.
 infer(Ast, Env0) ->
   case Ast of
@@ -63,6 +170,17 @@ infer(Ast, Env0) ->
       ModuleType = #type_module{row = Row},
       AnnotatedAst = Ast#ast_module{type = {ok, ModuleType}, statements = NewStatements},
       {AnnotatedAst, Env1};
+
+    #ast_case{subject = Subject, clauses = Clauses} ->
+      {AnnotatedSubject, Env1} = infer(Subject, Env0),
+      {AnnotatedClauses, Env2} = gleam:thread_map(fun infer_clause/2, Clauses, Env1),
+      SubjectType = fetch(AnnotatedSubject),
+      Env3 = unify_clauses(AnnotatedClauses, SubjectType, Env2),
+      Type = fetch_clause_type(hd(AnnotatedClauses)),
+      AnnotatedAst = #ast_case{type = {ok, Type},
+                               subject = AnnotatedSubject,
+                               clauses = AnnotatedClauses},
+      {AnnotatedAst, Env3};
 
     #ast_seq{first = First, then = Then} ->
       {AnnotatedFirst, Env1} = infer(First, Env0),
@@ -83,6 +201,12 @@ infer(Ast, Env0) ->
     #ast_local_call{fn = Fn, args = Args} ->
       {ReturnType, Env1} = infer_call(Fn, Args, Env0),
       AnnotatedAst = Ast#ast_local_call{type = {ok, ReturnType}},
+      {AnnotatedAst, Env1};
+
+    #ast_enum{name = Name, elems = Args} ->
+      Fn = #ast_var{name = Name},
+      {ReturnType, Env1} = infer_call(Fn, Args, Env0),
+      AnnotatedAst = Ast#ast_enum{type = {ok, ReturnType}},
       {AnnotatedAst, Env1};
 
     #ast_fn{args = Args, body = Body} ->
@@ -111,11 +235,10 @@ infer(Ast, Env0) ->
       end;
 
     #ast_assignment{name = Name, value = Value, then = Then} ->
-      {InferredValue, Env2} = infer(Value, increment_env_level(Env0)),
-      Env3 = decrement_env_level(Env2),
-      {GeneralizedType, Env4} = generalize(fetch(InferredValue), Env3),
-      ExtendedEnv = env_extend(Name, GeneralizedType, Env4),
-      infer(Then, ExtendedEnv);
+      {_ValueType, AnnotatedValue, Env1} = infer_assignment(Name, Value, Env0),
+      {AnnotatedThen, Env2} = infer(Then, Env1),
+      AnnotatedAst = Ast#ast_assignment{value = AnnotatedValue, then = AnnotatedThen},
+      {AnnotatedAst, Env2};
 
     #ast_tuple{elems = Elems} ->
       {AnnotatedElems, NewEnv} = gleam:thread_map(fun infer/2, Elems, Env0),
@@ -158,12 +281,15 @@ infer(Ast, Env0) ->
     #ast_record_select{record = Record, label = Label} ->
       {RowParentType, Env1} = new_var(Env0),
       {FieldType, Env2} = new_var(Env1),
-      RowType = #type_row_extend{label = Label, type = FieldType, parent = RowParentType},
+      RowType = #type_row_extend{label = Label,
+                                 type = FieldType,
+                                 parent = RowParentType},
       ParamType = #type_record{row = RowType},
       {AnnotatedRecord, Env3} = infer(Record, Env2),
       RecordType = fetch(AnnotatedRecord),
       Env4 = unify(ParamType, RecordType, Env3),
-      AnnotatedAst = Ast#ast_record_select{type = {ok, FieldType}, record = AnnotatedRecord},
+      AnnotatedAst = Ast#ast_record_select{type = {ok, FieldType},
+                                           record = AnnotatedRecord},
       {AnnotatedAst, Env4};
 
     #ast_raise{} ->
@@ -193,16 +319,86 @@ infer(Ast, Env0) ->
   end.
 
 
--spec module_statement(ast_expression(), {type(), env()})
-      -> {ast_expression(), {type(), env()}}.
+-spec ast_type_to_type(ast_type(), env()) -> {type(), env()}.
+ast_type_to_type(AstType, Env0) ->
+  case AstType of
+    % TODO: Check type exists.
+    #ast_type_constructor{name = Name, args = []} ->
+      T = #type_const{type = Name},
+      {T, Env0};
+
+    #ast_type_constructor{name = Name, args = Args} ->
+      {ArgsTypes, Env1} = gleam:thread_map(fun ast_type_to_type/2, Args, Env0),
+      T = #type_app{type = Name, args = ArgsTypes},
+      {T, Env1};
+
+    #ast_type_var{name = Name} ->
+      case env_lookup_type(Name, Env0) of
+        {ok, Var} ->
+          {Var, Env0};
+
+        error ->
+          error(some_error_about_not_knowing_the_type) % TODO
+      end
+  end.
+
+
+-spec infer_assignment(string(), ast_expression(), env()) -> {type(), ast_expression(), env()}.
+infer_assignment(Name, Value, Env0) ->
+  {InferredValue, Env2} = infer(Value, increment_env_level(Env0)),
+  Env3 = decrement_env_level(Env2),
+  {GeneralizedType, Env4} = generalize(fetch(InferredValue), Env3),
+  Env5 = env_extend(Name, GeneralizedType, Env4),
+  {GeneralizedType, InferredValue, Env5}.
+
+
+-spec module_statement(mod_statement(), {type(), env()})
+      -> {mod_statement(), {type(), env()}}.
 module_statement(Statement, {Row, Env0}) ->
   case Statement of
-    #ast_mod_fn{name = Name, args = Args, body = Body} ->
+    #ast_mod_enum{public = _Public, name = Name, args = Args, constructors = Constructors} ->
+      % Store the original types so the type vars in the enum definition
+      % (i.e. the a in Maybe(a)) do not leak outside the definition.
+      OriginalTypes = Env0#env.types,
+
+      % Register each type var in the env for later use in constructors.
+      NewVar =
+        fun(TypeVarName, E0) ->
+          {Var, E1} = new_generic_var(E0),
+          E2 = env_register_type(TypeVarName, Var, E1),
+          {Var, E2}
+        end,
+      {ArgsTypes, Env1} = gleam:thread_map(NewVar, Args, Env0),
+      Type =
+        case Args of
+          [] -> #type_const{type = Name};
+          _ -> #type_app{type = Name, args = ArgsTypes}
+        end,
+
+      % Create a function type for each constructor of the enum.
+      % Makes use of the type vars inserted in to the env previously.
+      RegisterConstructor =
+        fun(#ast_enum_def{name = CName, args = CArgs}, InnerEnv0) ->
+          {CArgsTypes, InnerEnv1} = gleam:thread_map(fun ast_type_to_type/2, CArgs, InnerEnv0),
+          T = #type_fn{args = CArgsTypes, return = Type},
+          env_extend(CName, T, InnerEnv1)
+        end,
+      Env2 = lists:foldl(RegisterConstructor, Env1, Constructors),
+
+      % Reset the env types to prevent the type vars leaking out.
+      Env3 = Env2#env{types = OriginalTypes},
+      % Register the new enum type
+      Env4 = env_register_type(Name, Type, Env3),
+      {Statement, {Row, Env4}};
+
+    #ast_mod_fn{public = Public, name = Name, args = Args, body = Body} ->
       Fn = #ast_fn{args = Args, body = Body},
-      {AnnotatedFn, Env1} = infer(Fn, Env0),
+      {FnType, AnnotatedFn, Env1} = infer_assignment(Name, Fn, Env0),
       #ast_fn{args = NewArgs, body = NewBody} = AnnotatedFn,
-      FnType = fetch(AnnotatedFn),
-      NewRow = #type_row_extend{label = Name, type = FnType, parent = Row},
+      NewRow = case Public of
+        true -> #type_row_extend{label = Name, type = FnType, parent = Row};
+        false -> Row
+      end,
       NewState = {NewRow, Env1},
       AnnotatedStatement = #ast_mod_fn{type = {ok, FnType},
                                        args = NewArgs,
@@ -233,10 +429,21 @@ infer_call(FunAst, Args, Env0) ->
   {ReturnType, Env3}.
 
 
+-spec fetch_clause_type(#ast_clause{}) -> type().
+fetch_clause_type(#ast_clause{value = Value}) ->
+  fetch(Value).
+
+
 -spec fetch(ast_expression()) -> type().
 fetch(Ast) ->
   case Ast of
     #ast_operator{type = {ok, Type}} ->
+      Type;
+
+    #ast_enum{type = {ok, Type}} ->
+      Type;
+
+    #ast_case{type = {ok, Type}} ->
       Type;
 
     #ast_local_call{type = {ok, Type}} ->
@@ -272,6 +479,9 @@ fetch(Ast) ->
     #ast_seq{then = Then} ->
       fetch(Then);
 
+    #ast_assignment{then = Then} ->
+      fetch(Then);
+
     #ast_record_empty{} ->
       #type_record{row = #type_row_empty{}};
 
@@ -305,9 +515,22 @@ resolve_type_vars(Ast, Env) ->
                                 Statements),
       Ast#ast_module{type = {ok, NewType}, statements = NewStatements};
 
+    #ast_case{type = {ok, Type}, clauses = Clauses} ->
+      Resolve =
+        fun(#ast_clause{value = Value} = Clause) ->
+          Clause#ast_clause{value = resolve_type_vars(Value, Env)}
+        end,
+      NewClauses = lists:map(Resolve, Clauses),
+      NewType = type_resolve_type_vars(Type, Env),
+      Ast#ast_case{type = {ok, NewType}, clauses = NewClauses};
+
     #ast_seq{first = First, then = Then} ->
       Ast#ast_seq{first = resolve_type_vars(First, Env),
                   then = resolve_type_vars(Then, Env)};
+
+    #ast_assignment{value = Value, then = Then} ->
+      Ast#ast_assignment{value = resolve_type_vars(Value, Env),
+                         then = resolve_type_vars(Then, Env)};
 
     #ast_operator{type = {ok, Type}} ->
       NewType = type_resolve_type_vars(Type, Env),
@@ -382,6 +605,9 @@ resolve_type_vars(Ast, Env) ->
 -spec statement_resolve_type_vars(ast_expression(), env()) -> ast_expression().
 statement_resolve_type_vars(Statement, Env) ->
   case Statement of
+    #ast_mod_enum{} ->
+      Statement;
+
     % % TODO: resolve type vars in args and body?
     #ast_mod_fn{type = {ok, Type}} ->
       NewType = type_resolve_type_vars(Type, Env),
@@ -428,6 +654,9 @@ type_resolve_type_vars(Type, Env) ->
 
     #type_var{type = Ref} ->
       case env_lookup_type_ref(Ref, Env) of
+        #type_var_generic{id = Id} ->
+          #type_var{type = Id};
+
         #type_var_unbound{id = Id} ->
           #type_var{type = Id};
 
@@ -509,9 +738,19 @@ env_extend(Name, GeneralizedType, Env = #env{vars = Vars}) ->
   NewVars = maps:put(Name, GeneralizedType, Vars),
   Env#env{vars = NewVars}.
 
+% TODO: Raise if we attempt to overwrite an existing type.
+-spec env_register_type(type_name(), type(), env()) -> env().
+env_register_type(Name, Type, Env = #env{types = Types}) ->
+  NewTypes = maps:put(Name, Type, Types),
+  Env#env{types = NewTypes}.
+
 -spec env_lookup(var_name(), env()) -> error | {ok, type()}.
 env_lookup(Name, #env{vars = Vars}) ->
   maps:find(Name, Vars).
+
+-spec env_lookup_type(type_name(), env()) -> error | {ok, type()}.
+env_lookup_type(Name, #env{types = Types}) ->
+  maps:find(Name, Types).
 
 -spec env_lookup_type_ref(type_var_reference(), env()) -> type_var().
 env_lookup_type_ref(Name, #env{type_refs = Refs}) ->
@@ -727,18 +966,6 @@ unify(Type1, Type2, Env) ->
      #type_record{row = Row2}, _} ->
       unify(Row1, Row2, Env);
 
-    % | TRowExtend(label1, field_ty1, rest_row1), (TRowExtend _ as row2) -> begin
-    % 	let rest_row1_tvar_ref_option = match rest_row1 with
-    % 		| TVar ({contents = Unbound _} as tvar_ref) -> Some tvar_ref
-    % 		| _ -> None
-    % 	in
-    % 	let rest_row2 = rewrite_row row2 label1 field_ty1 in
-    % 	begin match rest_row1_tvar_ref_option with
-    % 		| Some {contents = Link _} -> error "recursive row types"
-    % 		| _ -> ()
-    % 	end ;
-    % 	unify rest_row1 rest_row2
-    % end
     {#type_row_extend{label = Label, type = FieldType, parent = Parent} = Row,
      _,
      OtherRow,

@@ -2,8 +2,8 @@ import io
 import int
 import random
 import string
-import result:Result:*
-import order:Order
+import result:[Ok, Error]
+import order:[Gt, Eq, Lt]
 
 fn run() {
   secret_number = random:int(0, 100)
@@ -14,10 +14,12 @@ fn run() {
 fn loop(secret_number) {
   io:write("What's your guess? ")
   guess = io:read_line() |> string:trim |> string:to_int
+
   case guess {
-  | Ok(i) =>
+  | Ok(i) ->
       compare(i, secret_number)
-  | Error(_) =>
+
+  | Error(_) ->
       io:print("That doesn't look like a number to me... Try again")
       loop(secret_number)
   }
@@ -28,13 +30,15 @@ Here is some documentation! Hooray!
 """
 fn compare(guess, secret_number) {
   case int:compare(i, secret_number) {
-  | Order:LT =>
+  | Lt ->
+    io:print("Too low!")
+    loop(secret_number)
+
+  | Gt ->
       io:print("Too low!")
       loop(secret_number)
-  | Order:GT =>
-      io:print("Too low!")
-      loop(secret_number)
-  | Order:EQ =>
+
+  | Eq ->
       i = int:to_string(secret_number)
       io:print("You got it! The number was" <> i)
   }

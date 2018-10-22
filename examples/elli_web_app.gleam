@@ -3,7 +3,10 @@
 //
 // Run the application with the `start_link/0` function.
 
-import elli
+import elli:[Get, Delete]
+
+pub type Argument =
+  {}
 
 doc """
 The handle/2 callback is used by Elli to response to requests
@@ -14,35 +17,35 @@ pub fn handle(req, _args) {
   method = elli:method(req)
   path = elli:path(req)
   case (method, path) {
-  | (Get, []) => home()
-  | (Get, ["hello"]) => greet("world")
-  | (Get, ["hello", "jane"]) => greet_jane()
-  | (Get, ["hello", name]) => greet(name)
-  | (Delete, _) => reject_delete()
-  | _ => not_found()
+  | (Get, []) -> home()
+  | (Get, ["hello"]) -> greet("world")
+  | (Get, ["hello", "jane"]) -> greet_jane()
+  | (Get, ["hello", name]) -> greet(name)
+  | (Delete, _) -> reject_delete()
+  | _ -> not_found()
   }
 }
 
 // Response builder functions
 
 fn home() {
-  (200, [], "Hello, world!")
+  {200, [], "Hello, world!"}
 }
 
 fn greet_jane() {
-  (200, [], "Jane, so good to see you!")
+  {200, [], "Jane, so good to see you!"}
 }
 
 fn greet(name) {
-  (200, [], "Hello, " <> name <> "!")
+  {200, [], "Hello, " <> name <> "!"}
 }
 
 fn reject_delete() {
-  (405, [], "Sorry, no DELETE requests allowed.")
+  {405, [], "Sorry, no DELETE requests allowed."}
 }
 
 fn not_found() {
-  (404, [], "Not found")
+  {404, [], "Not found"}
 }
 
 // Lastly, a function to start the server.
@@ -52,7 +55,7 @@ The start_link/0 function can be used to create a new
 Elli web server process running this handler module.
 """
 pub fn start_link() {
-  Elli:start_link({
+  elli:start_link({
     callback = self,
     port = 4000,
   })

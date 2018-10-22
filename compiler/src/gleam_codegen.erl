@@ -11,14 +11,14 @@
 % Holds state used in code generation.
 -record(env, {uid = 0}).
 
-% TODO: Remove exports from module struct and instead check each statement to
-% see if it is `pub` or not. Also use the record below to store an export so
-% that we can expose type information.
+% TODO: Use the record below to store an export so that we can expose type
+% information.
+% Again, why did I want this?
 % -record(export, {name, arity, type}).
 
 -record(module_acc, {gen_tests = false, definitions = [], exports = []}).
 
-module(#ast_module{statements = Statements, exports = Exports}, ModName, Options) ->
+module(#ast_module{statements = Statements}, ModName, Options) ->
   PrefixedName = prefix_module(ModName),
   GenTests = proplists:get_value(gen_tests, Options, false),
   Acc0 = lists:foldl(fun module_statement/2,
@@ -29,7 +29,7 @@ module(#ast_module{statements = Statements, exports = Exports}, ModName, Options
   Acc2 = add_module_info(Acc1, PrefixedName),
   Acc = Acc2,
 
-  C_exports = lists:map(fun export/1, Exports) ++ Acc#module_acc.exports,
+  C_exports = Acc#module_acc.exports,
   C_definitions = Acc#module_acc.definitions,
 
   Attributes = [], % What are these?
@@ -60,13 +60,25 @@ add_definition(Acc = #module_acc{definitions = Defs}, Def) ->
 add_export(Acc = #module_acc{exports = Exports}, Export) ->
   Acc#module_acc{exports = [Export | Exports]}.
 
-module_statement(#ast_mod_fn{} = Fn, Acc) ->
-  add_definition(Acc, named_function(Fn));
-module_statement(#ast_mod_test{} = Test, #module_acc{gen_tests = true} = Acc) ->
-  {C_export, C_test} = test(Test),
-  add_export(add_definition(Acc, C_test), C_export);
-module_statement(#ast_mod_test{}, #module_acc{gen_tests = false} = Acc) ->
-  Acc.
+module_statement(Statement, Acc) ->
+  case Statement of
+    #ast_mod_fn{public = false} ->
+      add_definition(Acc, named_function(Statement));
+
+    #ast_mod_fn{name = Name, args = Args, public = true} ->
+      Acc1 = add_definition(Acc, named_function(Statement)),
+      add_export(Acc1, export(Name, length(Args)));
+
+    #ast_mod_test{} ->
+      case Acc#module_acc.gen_tests of
+        true ->
+          {C_export, C_test} = test(Statement),
+          add_export(add_definition(Acc, C_test), C_export);
+
+        false ->
+          Acc
+      end
+  end.
 
 test(#ast_mod_test{name = Name, body = Body}) ->
   TestName = Name ++ "_test",
@@ -75,6 +87,9 @@ test(#ast_mod_test{name = Name, body = Body}) ->
   {C_export, C_fun}.
 
 export({Name, Arity}) when is_list(Name), is_integer(Arity) ->
+  cerl:c_fname(list_to_atom(Name), Arity).
+
+export(Name, Arity) when is_list(Name), is_integer(Arity) ->
   cerl:c_fname(list_to_atom(Name), Arity).
 
 module_info(ModuleName, Params) when is_list(ModuleName) ->
@@ -187,12 +202,12 @@ expression(#ast_assignment{name = Name, value = Value, then = Then}, Env) when i
   {C_then, Env2} = expression(Then, Env1),
   {cerl:c_let([C_var], C_value, C_then), Env2};
 
-expression(#ast_adt{name = Name, elems = []}, Env) when is_list(Name) ->
-  AtomName = list_to_atom(adt_name_value(Name)),
+expression(#ast_enum{name = Name, elems = []}, Env) when is_list(Name) ->
+  AtomName = list_to_atom(enum_name_value(Name)),
   {cerl:c_atom(AtomName), Env};
 
-expression(#ast_adt{name = Name, meta = Meta, elems = Elems}, Env) when is_list(Name) ->
-  AtomValue = adt_name_value(Name),
+expression(#ast_enum{name = Name, meta = Meta, elems = Elems}, Env) when is_list(Name) ->
+  AtomValue = enum_name_value(Name),
   Atom = #ast_atom{meta = Meta, value = AtomValue},
   expression(#ast_tuple{elems = [Atom | Elems]}, Env);
 
@@ -327,16 +342,16 @@ clause(#ast_clause{pattern = Pattern, value = Value}, Env) ->
   C_clause = cerl:c_clause([C_pattern], C_value),
   {C_clause, Env2}.
 
-adt_name_value(Chars) when is_list(Chars) ->
-  adt_name_value(Chars, []).
+enum_name_value(Chars) when is_list(Chars) ->
+  enum_name_value(Chars, []).
 
-adt_name_value([C | Chars], []) when ?is_uppercase_char(C) ->
-  adt_name_value(Chars, [C + 32]);
-adt_name_value([C | Chars], Acc) when ?is_uppercase_char(C) ->
-  adt_name_value(Chars, [C + 32, $_ | Acc]);
-adt_name_value([C | Chars], Acc) ->
-  adt_name_value(Chars, [C | Acc]);
-adt_name_value([], Acc) ->
+enum_name_value([C | Chars], []) when ?is_uppercase_char(C) ->
+  enum_name_value(Chars, [C + 32]);
+enum_name_value([C | Chars], Acc) when ?is_uppercase_char(C) ->
+  enum_name_value(Chars, [C + 32, $_ | Acc]);
+enum_name_value([C | Chars], Acc) ->
+  enum_name_value(Chars, [C | Acc]);
+enum_name_value([], Acc) ->
   lists:reverse(Acc).
 
 c_list(Elems) ->
@@ -350,10 +365,14 @@ binary_string_byte(Char) ->
                 cerl:c_atom(integer),
                 c_list([cerl:c_atom(unsigned), cerl:c_atom(big)])).
 
-prefix_module(Name = [C | _]) when ?is_uppercase_char(C) ->
-  "Gleam." ++ Name;
+% TODO: FIXME: Whether the module is an Erlang one should be specified in the
+% AST, we should not have a special list here.
 prefix_module(Name) when is_list(Name) ->
-  Name.
+  case Name of
+    "erlang" -> "erlang";
+    "maps" -> "maps";
+    _ -> "gleam_" ++ Name
+  end.
 
 uid(#env{uid = UID} = Env) ->
   {UID, Env#env{uid = UID + 1}}.
