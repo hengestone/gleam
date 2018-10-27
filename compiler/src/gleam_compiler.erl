@@ -9,8 +9,8 @@ source_to_binary(Source, ModName) ->
 source_to_binary(Source, ModName, Options) ->
   {ok, Tokens, _} = gleam_tokenizer:string(Source),
   {ok, Ast} = gleam_parser:parse(Tokens),
-  % _ = gleam_type:infer(Ast), % TODO
-  {ok, Forms} = gleam_codegen:module(Ast, ModName, Options),
+  {ok, AnnotatedAst} = gleam_type:infer(Ast),
+  {ok, Forms} = gleam_codegen:module(AnnotatedAst, ModName, Options),
   {ok, _, Bin} = compile:forms(Forms, [report, verbose, from_core]),
   Bin.
 

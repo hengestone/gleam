@@ -1,8 +1,8 @@
--define(print(Var), io:format("DEBUG: ~p:~p - ~p~n~n ~p~n~n", [?MODULE, ?LINE, ??Var, Var])).
+-define(print(Var), io:format("DEBUG: ~p:~p - ~p~n ~p~n", [?MODULE, ?LINE, ??Var, Var])).
 
 -record(meta, {line = 1 :: non_neg_integer()}).
 -type meta() :: #meta{}.
-
+-type scope() :: local | module.
 -type export() :: {string(), non_neg_integer()}.
 -type type_annotation() :: type_not_annotated | {ok, type()}.
 
@@ -73,6 +73,7 @@
 -record(ast_var,
         {meta = #meta{},
          type = type_not_annotated :: type_annotation(),
+         scope = local :: scope(),
          name :: string()}).
 
 % TODO: Remove the type annotation so it's calculated by traversing the body
@@ -84,7 +85,7 @@
          args = [] :: [string()],
          body :: ast_expression()}).
 
--record(ast_call,
+-record(ast_module_call,
         {meta = #meta{} :: meta(),
          module :: string(),
          name :: string(),
@@ -119,7 +120,7 @@
          type = type_not_annotated :: type_annotation(),
          value :: ast_expression()}).
 
--record(ast_local_call,
+-record(ast_call,
         {meta = #meta{} :: meta(),
          type = type_not_annotated :: type_annotation(),
          fn :: ast_expression(),
@@ -178,11 +179,12 @@
 -record(ast_seq,
         {first :: ast_expression(),
          then :: ast_expression()}).
+
 -type ast_expression()
       :: #ast_enum{}
       | #ast_assignment{}
       | #ast_atom{}
-      | #ast_call{}
+      | #ast_module_call{}
       | #ast_case{}
       | #ast_cons{}
       | #ast_float{}
@@ -190,7 +192,7 @@
       | #ast_fn{}
       | #ast_hole{}
       | #ast_int{}
-      | #ast_local_call{}
+      | #ast_call{}
       | #ast_nil{}
       | #ast_operator{}
       | #ast_raise{}
@@ -216,7 +218,8 @@
 
 -record(type_const, {type :: string()}).
 -record(type_fn, {args :: list(type()), return :: type()}).
--record(type_app, {type :: type(), args :: list(type())}).
+% Should type be a type for type app? Possibly for aliases?
+-record(type_app, {type :: string(), args :: list(type())}).
 -record(type_var, {type :: type_var_reference()}).
 -record(type_record, {row :: type()}).
 -record(type_module, {row :: type()}).
